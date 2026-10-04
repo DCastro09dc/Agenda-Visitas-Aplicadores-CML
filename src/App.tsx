@@ -108,7 +108,7 @@ function App() {
       const auxMap = new Map(aux.map(r => [value(r, "Unnamed: 0", "Código", "Codigo"), r]));
       const parsed = main.map(r => {
         const a = auxMap.get(value(r, "Código", "Codigo")) ?? {};
-        const merged = {
+        const merged: Row = {
           ...r,
           "Aplicador 1": value(a, "Aplicador 1"),
           "Aplicador 2": value(a, "Aplicador 2"),
@@ -129,7 +129,7 @@ function App() {
           import_id: null,
           aplicador_id: match?.id ?? null,
           aplicador_nombre: applicantName || null,
-          fecha: toIsoDate(merged["Fecha"]),
+          fecha: toIsoDate(value(merged, "Fecha", "FECHA", "fecha")),
           codigo: value(merged, "Código", "Codigo") || null,
           centro_escolar: value(merged, "Centro escolar") || null,
           departamento: value(merged, "Departamento") || null,
