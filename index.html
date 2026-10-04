@@ -7,7 +7,28 @@
     <title>Agenda de Visitas | CML</title>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <div id="root">
+      <div style="min-height:100vh;display:grid;place-items:center;background:#f4f7fb;font-family:system-ui,sans-serif;color:#123b63">
+        <div style="text-align:center;padding:24px">
+          <strong style="font-size:24px">Agenda de Visitas CML</strong>
+          <p style="color:#667085">Cargando la aplicación…</p>
+        </div>
+      </div>
+    </div>
+    <script>
+      window.addEventListener("error", function (event) {
+        var root = document.getElementById("root");
+        if (root && event.error) {
+          root.innerHTML = '<div style="min-height:100vh;display:grid;place-items:center;background:#f4f7fb;font-family:system-ui,sans-serif;padding:24px"><div style="max-width:620px;background:white;border:1px solid #e2e8ef;border-radius:16px;padding:24px"><h1 style="color:#123b63">La aplicación encontró un error</h1><p>Recargá esta página. Si vuelve a aparecer, mandame una captura de esta pantalla.</p><pre style="white-space:pre-wrap;color:#b42318;background:#fff1f0;padding:12px;border-radius:8px">' + String(event.error.message || event.message) + '</pre></div></div>';
+        }
+      });
+      window.addEventListener("unhandledrejection", function (event) {
+        var root = document.getElementById("root");
+        if (root && event.reason) {
+          root.innerHTML = '<div style="min-height:100vh;display:grid;place-items:center;background:#f4f7fb;font-family:system-ui,sans-serif;padding:24px"><div style="max-width:620px;background:white;border:1px solid #e2e8ef;border-radius:16px;padding:24px"><h1 style="color:#123b63">No se pudo iniciar la aplicación</h1><p>Recargá esta página. Si vuelve a aparecer, mandame una captura.</p><pre style="white-space:pre-wrap;color:#b42318;background:#fff1f0;padding:12px;border-radius:8px">' + String(event.reason.message || event.reason) + '</pre></div></div>';
+        }
+      });
+    </script>
+    <script type="module" src="/Agenda-Visitas-Aplicadores-CML/assets/index-IP7J5C1p.js"></script>
   </body>
 </html>
