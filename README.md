@@ -1,38 +1,20 @@
 # Agenda de Visitas - Aplicadores CML
 
-Aplicación web para organizar y dar seguimiento a las visitas de aplicadores.
+Aplicación web para consultar la programación CML a partir del Excel oficial.
 
-## Stack inicial
+## Lo que ya hace
+- Carga el Excel directamente desde el teléfono o computadora.
+- Lee **Programación nacional** y combina información de **Hoja 1** por código.
+- Búsqueda libre por nombre del centro, código, aplicador, director, municipio y cualquier dato disponible.
+- Filtros por departamento y grupo.
+- Ficha completa de cada centro.
+- Funciona sin subir el Excel a un servidor.
 
-- React + TypeScript
-- Vite
-- Lucide React para iconos
-
-## Estructura
-
-```
-src/
-├── data/              # Datos iniciales / mocks
-│   └── mockVisits.ts
-├── App.tsx            # Dashboard inicial
-├── main.tsx           # Punto de entrada
-├── styles.css         # Estilos globales
-└── types.ts           # Tipos del dominio
-```
-
-## Próximas etapas
-
-1. Formulario para crear y editar visitas.
-2. Calendario y filtros por fecha, aplicador y estado.
-3. Gestión de aplicadores y clientes.
-4. Persistencia de datos (base de datos/API).
-5. Mapa y ubicación de visitas.
-6. Autenticación y permisos por usuario.
-7. Reportes y exportación.
+## Privacidad
+El repositorio es público. Por eso **no se incluye el Excel ni una copia de sus datos** dentro del proyecto. Los teléfonos, nombres y demás información permanecen en el archivo que el usuario carga localmente en su navegador.
 
 ## Desarrollo
-
-```bash
+```
 npm install
 npm run dev
 ```
