@@ -1,127 +1,227 @@
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
-import { Search, Upload, X, MapPin, CalendarDays, Users, Wifi, UserRound, Phone, FileSpreadsheet } from "lucide-react";
+import { CalendarDays, FileSpreadsheet, LogOut, MapPin, Search, Upload, UserRound, X } from "lucide-react";
+import { supabase, supabaseConfigured } from "./lib/supabase";
 
 type Row = Record<string, unknown>;
+type Profile = { id: string; full_name: string; role: "admin" | "worker"; active: boolean };
+type DbRow = {
+  id: string;
+  aplicador_id: string | null;
+  aplicador_nombre: string | null;
+  fecha: string | null;
+  codigo: string | null;
+  centro_escolar: string | null;
+  departamento: string | null;
+  municipio: string | null;
+  distrito: string | null;
+  grupo: string | null;
+  datos: Row;
+};
 
 const value = (row: Row, ...keys: string[]) => {
   for (const key of keys) if (row[key] !== undefined && String(row[key]).trim() !== "") return String(row[key]);
   return "";
 };
-const normalize = (text: string) => text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const normalize = (text: string) => text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
 const formatDate = (v: unknown) => {
   if (!v) return "—";
   if (v instanceof Date) return v.toLocaleDateString("es-SV");
-  return String(v);
+  const s = String(v);
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + "T00:00:00") : null;
+  return d ? d.toLocaleDateString("es-SV") : s;
+};
+const toIsoDate = (v: unknown) => {
+  if (!v) return null;
+  if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString().slice(0, 10);
+  if (typeof v === "number") {
+    const d = XLSX.SSF.parse_date_code(v);
+    return d ? `${d.y}-${String(d.m).padStart(2,"0")}-${String(d.d).padStart(2,"0")}` : null;
+  }
+  const s = String(v).trim();
+  const m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 };
 
 function App() {
-  const [rows, setRows] = useState<Row[]>([]);
+  const [session, setSession] = useState<any>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [rows, setRows] = useState<DbRow[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [query, setQuery] = useState("");
   const [department, setDepartment] = useState("");
   const [group, setGroup] = useState("");
-  const [selected, setSelected] = useState<Row | null>(null);
+  const [selected, setSelected] = useState<DbRow | null>(null);
   const [fileName, setFileName] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
 
-  const loadFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setFileName(file.name);
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-    const mainSheet = workbook.Sheets["Programación nacional"] ?? workbook.Sheets[workbook.SheetNames[0]];
-    const auxSheet = workbook.Sheets["Hoja 1"];
-    const main = XLSX.utils.sheet_to_json<Row>(mainSheet, { defval: "" });
-    const aux = auxSheet ? XLSX.utils.sheet_to_json<Row>(auxSheet, { defval: "" }) : [];
-    const auxMap = new Map(aux.map(r => [value(r, "Unnamed: 0", "Código", "Codigo"), r]));
-    setRows(main.map(r => {
-      const a = auxMap.get(value(r, "Código", "Codigo")) ?? {};
-      return {
-        ...r,
-        "Aplicador 1": value(a, "Aplicador 1"),
-        "Aplicador 2": value(a, "Aplicador 2"),
-        "Aplicador 3": value(a, "Aplicador 3"),
-        "Director respondió 1° contacto": value(a, "Director respondio 1° contacto"),
-        "Director respondió 2° contacto": value(a, "Director respondio 2° contacto"),
-        "Director respondió 3° contacto": value(a, "Director respondio 3° contacto"),
-        "Intervenida": value(a, "INTERVENIDA"),
-        "Difícil acceso (seguimiento)": value(a, "Dificil acceso"),
-        "Zona peligrosa": value(a, "Zona Peligrosa"),
-        "Conectividad": value(a, "CONECTIVIDAD"),
-        "Aplicación en plataforma": value(a, "APLICACION EN PLATAFORMA"),
-        "Comentarios": value(a, "COMENTARIOS"),
-      };
-    }));
-    setSelected(null);
+  useEffect(() => {
+    if (!supabaseConfigured) { setLoading(false); return; }
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!session?.user) { setProfile(null); setRows([]); setLoading(false); return; }
+    loadProfile(session.user.id);
+  }, [session?.user?.id]);
+
+  const loadProfile = async (id: string) => {
+    setLoading(true);
+    const { data, error } = await supabase.from("profiles").select("id,full_name,role,active").eq("id", id).single();
+    if (error) setMessage("Tu usuario existe, pero todavía no tiene perfil en la programación.");
+    setProfile(data as Profile | null);
+    if (data?.role === "admin") await loadProfiles();
+    await loadRows(data as Profile | null);
+    setLoading(false);
   };
 
-  const departments = useMemo(() => [...new Set(rows.map(r => value(r, "Departamento")).filter(Boolean))].sort(), [rows]);
-  const groups = useMemo(() => [...new Set(rows.map(r => value(r, "Grupo")).filter(Boolean))].sort(), [rows]);
+  const loadProfiles = async () => {
+    const { data } = await supabase.from("profiles").select("id,full_name,role,active").eq("active", true).order("full_name");
+    setProfiles((data ?? []) as Profile[]);
+  };
+
+  const loadRows = async (p: Profile | null = profile) => {
+    if (!p) return;
+    let q = supabase.from("programaciones").select("*").order("fecha", { ascending: true });
+    if (p.role !== "admin") q = q.eq("aplicador_id", p.id);
+    const { data, error } = await q;
+    if (error) setMessage(error.message);
+    else setRows((data ?? []) as DbRow[]);
+  };
+
+  const parseExcel = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || profile?.role !== "admin") return;
+    setFileName(file.name); setMessage(""); setImporting(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+      const mainSheet = workbook.Sheets["Programación nacional"] ?? workbook.Sheets[workbook.SheetNames[0]];
+      const auxSheet = workbook.Sheets["Hoja 1"];
+      const main = XLSX.utils.sheet_to_json<Row>(mainSheet, { defval: "" });
+      const aux = auxSheet ? XLSX.utils.sheet_to_json<Row>(auxSheet, { defval: "" }) : [];
+      const auxMap = new Map(aux.map(r => [value(r, "Unnamed: 0", "Código", "Codigo"), r]));
+      const parsed = main.map(r => {
+        const a = auxMap.get(value(r, "Código", "Codigo")) ?? {};
+        const merged = {
+          ...r,
+          "Aplicador 1": value(a, "Aplicador 1"),
+          "Aplicador 2": value(a, "Aplicador 2"),
+          "Aplicador 3": value(a, "Aplicador 3"),
+          "Director respondió 1° contacto": value(a, "Director respondio 1° contacto"),
+          "Director respondió 2° contacto": value(a, "Director respondio 2° contacto"),
+          "Director respondió 3° contacto": value(a, "Director respondio 3° contacto"),
+          "Intervenida": value(a, "INTERVENIDA"),
+          "Difícil acceso (seguimiento)": value(a, "Dificil acceso"),
+          "Zona peligrosa": value(a, "Zona Peligrosa"),
+          "Conectividad": value(a, "CONECTIVIDAD"),
+          "Aplicación en plataforma": value(a, "APLICACION EN PLATAFORMA"),
+          "Comentarios": value(a, "COMENTARIOS")
+        };
+        const applicantName = value(merged, "Aplicador asignado", "Aplicador", "Nombre aplicador", "Aplicador 1");
+        const match = profiles.find(p => normalize(p.full_name) === normalize(applicantName));
+        return {
+          import_id: null,
+          aplicador_id: match?.id ?? null,
+          aplicador_nombre: applicantName || null,
+          fecha: toIsoDate(merged["Fecha"]),
+          codigo: value(merged, "Código", "Codigo") || null,
+          centro_escolar: value(merged, "Centro escolar") || null,
+          departamento: value(merged, "Departamento") || null,
+          municipio: value(merged, "Municipio") || null,
+          distrito: value(merged, "Distrito") || null,
+          grupo: value(merged, "Grupo") || null,
+          datos: merged
+        };
+      });
+      const unmatched = [...new Set(parsed.filter(x => x.aplicador_nombre && !x.aplicador_id).map(x => x.aplicador_nombre!))];
+      if (unmatched.length) {
+        setMessage(`No publiqué el Excel: ${unmatched.length} aplicador(es) no coinciden con usuarios registrados: ${unmatched.slice(0,8).join(", ")}${unmatched.length > 8 ? "…" : ""}`);
+        return;
+      }
+      if (!parsed.length) { setMessage("El Excel no contiene registros."); return; }
+      const { data: batch, error: batchError } = await supabase.from("importaciones").insert({ archivo_nombre: file.name, filas: parsed.length, creador_id: profile.id }).select("id").single();
+      if (batchError) throw batchError;
+      const records = parsed.map(x => ({ ...x, import_id: batch.id }));
+      const { error: deleteError } = await supabase.from("programaciones").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      if (deleteError) throw deleteError;
+      for (let i=0; i<records.length; i+=500) {
+        const { error } = await supabase.from("programaciones").insert(records.slice(i, i+500));
+        if (error) throw error;
+      }
+      setMessage(`Programación publicada: ${records.length.toLocaleString("es-SV")} registros.`);
+      await loadRows(profile);
+    } catch (e: any) {
+      setMessage(e?.message || "No se pudo importar el Excel.");
+    } finally { setImporting(false); event.target.value = ""; }
+  };
+
+  const departments = useMemo(() => [...new Set(rows.map(r => r.departamento).filter(Boolean) as string[])].sort(), [rows]);
+  const groups = useMemo(() => [...new Set(rows.map(r => r.grupo).filter(Boolean) as string[])].sort(), [rows]);
   const results = useMemo(() => {
-    const q = normalize(query.trim());
+    const q = normalize(query);
     return rows.filter(r => {
-      const hay = normalize(Object.values(r).map(v => String(v ?? "")).join(" "));
-      return (!q || hay.includes(q)) &&
-        (!department || value(r, "Departamento") === department) &&
-        (!group || value(r, "Grupo") === group);
+      const hay = normalize([r.centro_escolar,r.codigo,r.aplicador_nombre,r.departamento,r.municipio,r.distrito,r.grupo,JSON.stringify(r.datos)].join(" "));
+      return (!q || hay.includes(q)) && (!department || r.departamento === department) && (!group || r.grupo === group);
     });
   }, [rows, query, department, group]);
 
-  const clear = () => { setQuery(""); setDepartment(""); setGroup(""); setSelected(null); };
+  if (!supabaseConfigured) return <SetupScreen />;
+  if (!session) return <Login onMessage={setMessage} message={message} />;
+  if (loading) return <div className="loading">Cargando tu programación…</div>;
+  if (!profile) return <Login onMessage={setMessage} message={message} />;
 
-  return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div><div className="eyebrow">CML · APLICADORES</div><h1>Agenda de Visitas</h1><p>Buscador de programación y seguimiento de centros escolares</p></div>
-        <label className="upload-button"><Upload size={18}/><span>Cargar Excel</span><input type="file" accept=".xlsx,.xls" onChange={loadFile}/></label>
-      </header>
+  const signOut = () => supabase.auth.signOut();
 
-      <main className="content">
-        <section className="hero-panel">
-          <div className="hero-icon"><FileSpreadsheet/></div>
-          <div><h2>{fileName ? "Programación cargada" : "Cargá la programación para comenzar"}</h2>
-          <p>{fileName ? <><b>{fileName}</b> · {rows.length.toLocaleString("es-SV")} registros listos para buscar.</> : "El Excel se procesa directamente en este navegador y no se sube a ningún servidor."}</p></div>
+  return <div className="app-shell">
+    <header className="topbar">
+      <div><div className="eyebrow">CML · APLICADORES</div><h1>Agenda de Visitas</h1><p>{profile.role === "admin" ? "Panel administrativo · programación centralizada" : "Tu programación asignada"}</p></div>
+      <div className="header-actions">
+        {profile.role === "admin" && <label className="upload-button"><Upload size={18}/><span>{importing ? "Publicando…" : "Cargar Excel"}</span><input type="file" accept=".xlsx,.xls" disabled={importing} onChange={parseExcel}/></label>}
+        <button className="logout-button" onClick={signOut}><LogOut size={17}/> Salir</button>
+      </div>
+    </header>
+    <main className="content">
+      <section className="hero-panel">
+        <div className="hero-icon"><UserRound/></div>
+        <div><h2>Hola, {profile.full_name}</h2><p>{profile.role === "admin" ? "Solo vos podés publicar una nueva programación. Al publicarla, se actualiza para todos." : `Tenés ${rows.length.toLocaleString("es-SV")} registro(s) asignado(s).`}</p></div>
+      </section>
+      {message && <div className="notice">{message}</div>}
+      {rows.length > 0 && <>
+        <section className="search-panel">
+          <div className="search-box"><Search size={21}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar centro, código, municipio, grupo…"/>{query && <button onClick={()=>setQuery("")}><X/></button>}</div>
+          <select value={department} onChange={e=>setDepartment(e.target.value)}><option value="">Todos los departamentos</option>{departments.map(d=><option key={d}>{d}</option>)}</select>
+          <select value={group} onChange={e=>setGroup(e.target.value)}><option value="">Todos los grupos</option>{groups.map(g=><option key={g}>{g}</option>)}</select>
+          <button className="clear-button" onClick={()=>{setQuery("");setDepartment("");setGroup("");setSelected(null)}}>Limpiar</button>
         </section>
-
-        {rows.length > 0 && <>
-          <section className="search-panel">
-            <div className="search-box"><Search size={21}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar por nombre, código, aplicador, director, municipio…"/>{query && <button onClick={()=>setQuery("")}><X/></button>}</div>
-            <select value={department} onChange={e=>setDepartment(e.target.value)}><option value="">Todos los departamentos</option>{departments.map(d=><option key={d}>{d}</option>)}</select>
-            <select value={group} onChange={e=>setGroup(e.target.value)}><option value="">Todos los grupos</option>{groups.map(g=><option key={g}>{g}</option>)}</select>
-            <button className="clear-button" onClick={clear}>Limpiar</button>
-          </section>
-
-          <div className="result-bar"><b>{results.length.toLocaleString("es-SV")}</b> resultado(s){results.length > 150 && " · mostrando los primeros 150"}</div>
-          {!selected ? <section className="results">
-            {results.slice(0,150).map((r,i)=><button className="result-card" key={i} onClick={()=>setSelected(r)}>
-              <div className="result-main"><h3>{value(r,"Centro escolar") || "Sin nombre"}</h3><div className="chips"><span>Código {value(r,"Código")}</span><span>{formatDate(r["Fecha"])}</span><span>{value(r,"Grupo")}</span></div></div>
-              <div className="location"><MapPin size={16}/>{value(r,"Municipio")} · {value(r,"Distrito")}</div>
-            </button>)}
-            {!results.length && <div className="empty">No encontramos coincidencias. Probá con parte del nombre o código.</div>}
-          </section> : <Detail row={selected} onBack={()=>setSelected(null)}/>}
-        </>}
-      </main>
-    </div>
-  );
+        <div className="result-bar"><b>{results.length.toLocaleString("es-SV")}</b> resultado(s)</div>
+        {!selected ? <section className="results">{results.slice(0,150).map(r=><button className="result-card" key={r.id} onClick={()=>setSelected(r)}>
+          <div className="result-main"><h3>{r.centro_escolar || "Sin nombre"}</h3><div className="chips"><span>Código {r.codigo || "—"}</span><span>{formatDate(r.fecha)}</span><span>{r.grupo || "—"}</span></div></div>
+          <div className="location"><MapPin size={16}/>{r.municipio || "—"} · {r.distrito || "—"}</div>
+        </button>)}{!results.length && <div className="empty">No encontramos coincidencias.</div>}</section>
+        : <Detail row={selected} onBack={()=>setSelected(null)}/>}
+      </>}
+      {!rows.length && <div className="empty">Todavía no hay programación publicada para este usuario.</div>}
+    </main>
+  </div>;
 }
 
-function Detail({ row, onBack }: { row: Row; onBack: () => void }) {
-  const fields = [
-    ["Código", value(row,"Código")],["Fecha",formatDate(row["Fecha"])],["Semana",value(row,"Semana")],["Región",value(row,"Región")],
-    ["Departamento",value(row,"Departamento")],["Municipio",value(row,"Municipio")],["Distrito",value(row,"Distrito")],["Grupo",value(row,"Grupo")],
-    ["Requiere Starlink",value(row,"Requiere Starlink")],["Centro de difícil acceso",value(row,"Centro de difícil acceso")],
-    ["Aplicador asignado",value(row,"Aplicador asignado")],["ID aplicador",value(row,"ID")],["Teléfono aplicador",value(row,"Teléfono")],
-    ["Vive en",value(row,"Vive en")],["Fuera de su departamento",value(row,"Fuera de su departamento")],
-    ["Km línea recta",value(row,"Km (línea recta)")],["Km carretera",value(row,"Km estimados por carretera")],
-    ["Starlink del aplicador",value(row,"Starlink del aplicador")],["Director",value(row,"Director")],["Teléfono del director",value(row,"Teléfono del director")],
-    ["Matrícula",value(row,"Matrícula")],["Motivo de la fecha",value(row,"Motivo de la fecha")],
-    ["Aplicador 1",value(row,"Aplicador 1")],["Aplicador 2",value(row,"Aplicador 2")],["Aplicador 3",value(row,"Aplicador 3")],
-    ["Intervenida",value(row,"Intervenida")],["Difícil acceso (seguimiento)",value(row,"Difícil acceso (seguimiento)")],
-    ["Zona peligrosa",value(row,"Zona peligrosa")],["Conectividad",value(row,"Conectividad")],["Aplicación en plataforma",value(row,"Aplicación en plataforma")],["Comentarios",value(row,"Comentarios")]
-  ];
-  return <section className="detail-panel"><button className="back-button" onClick={onBack}>← Volver a resultados</button>
-    <div className="detail-title"><div><div className="eyebrow">CENTRO ESCOLAR</div><h2>{value(row,"Centro escolar")}</h2></div><div className="detail-chips"><span><CalendarDays/> {formatDate(row["Fecha"])}</span><span><Users/> {value(row,"Grupo")}</span></div></div>
-    <div className="detail-grid">{fields.map(([label,val])=><div className="field" key={label}><b>{label}</b><span>{val || "—"}</span></div>)}</div>
-  </section>;
+function Login({ onMessage, message }: { onMessage: (s:string)=>void; message:string }) {
+  const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [busy,setBusy]=useState(false);
+  const submit=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);onMessage("");const {error}=await supabase.auth.signInWithPassword({email,password});if(error)onMessage(error.message);setBusy(false)};
+  return <div className="auth-shell"><form className="auth-card" onSubmit={submit}><div className="hero-icon"><UserRound/></div><div className="eyebrow">CML · APLICADORES</div><h1>Ingresá a tu agenda</h1><p>Usá el correo y contraseña que te asignó el administrador.</p><input type="email" required placeholder="Correo electrónico" value={email} onChange={e=>setEmail(e.target.value)}/><input type="password" required placeholder="Contraseña" value={password} onChange={e=>setPassword(e.target.value)}/><button className="primary-button" disabled={busy}>{busy?"Ingresando…":"Ingresar"}</button>{message&&<div className="notice">{message}</div>}</form></div>;
+}
+
+function SetupScreen(){return <div className="auth-shell"><div className="auth-card"><div className="hero-icon"><FileSpreadsheet/></div><div className="eyebrow">CML · CONFIGURACIÓN</div><h1>Falta conectar la base de datos</h1><p>Esta versión ya está preparada para Supabase. Hay que colocar VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en el entorno de publicación.</p></div></div>}
+
+function Detail({row,onBack}:{row:DbRow;onBack:()=>void}){
+  const data=row.datos||{};
+  const fields=[["Código",row.codigo],["Fecha",formatDate(row.fecha)],["Semana",value(data,"Semana")],["Región",value(data,"Región")],["Departamento",row.departamento],["Municipio",row.municipio],["Distrito",row.distrito],["Grupo",row.grupo],["Aplicador asignado",row.aplicador_nombre],["ID aplicador",value(data,"ID")],["Teléfono aplicador",value(data,"Teléfono")],["Vive en",value(data,"Vive en")],["Km línea recta",value(data,"Km (línea recta)")],["Km carretera",value(data,"Km estimados por carretera")],["Director",value(data,"Director")],["Teléfono del director",value(data,"Teléfono del director")],["Matrícula",value(data,"Matrícula")],["Motivo de la fecha",value(data,"Motivo de la fecha")],["Aplicador 1",value(data,"Aplicador 1")],["Aplicador 2",value(data,"Aplicador 2")],["Aplicador 3",value(data,"Aplicador 3")],["Intervenida",value(data,"Intervenida")],["Difícil acceso (seguimiento)",value(data,"Difícil acceso (seguimiento)")],["Zona peligrosa",value(data,"Zona peligrosa")],["Conectividad",value(data,"Conectividad")],["Aplicación en plataforma",value(data,"Aplicación en plataforma")],["Comentarios",value(data,"Comentarios")]];
+  return <section className="detail-panel"><button className="back-button" onClick={onBack}>← Volver</button><div className="detail-title"><div><div className="eyebrow">CENTRO ESCOLAR</div><h2>{row.centro_escolar||"Sin nombre"}</h2></div><div className="detail-chips"><span><CalendarDays/> {formatDate(row.fecha)}</span><span>{row.grupo||"—"}</span></div></div><div className="detail-grid">{fields.map(([label,val])=><div className="field" key={label}><b>{label}</b><span>{val||"—"}</span></div>)}</div></section>
 }
 export default App;
