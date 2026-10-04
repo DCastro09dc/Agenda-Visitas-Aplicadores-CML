@@ -72,11 +72,34 @@ function App() {
 
   const loadProfile = async (id: string) => {
     setLoading(true);
-    const { data, error } = await supabase.from("profiles").select("id,full_name,role,active").eq("id", id).single();
-    if (error) setMessage("Tu usuario existe, pero todavía no tiene perfil en la programación.");
-    setProfile(data as Profile | null);
-    if (data?.role === "admin") await loadProfiles();
-    await loadRows(data as Profile | null);
+    let { data, error } = await supabase.from("profiles").select("id,full_name,role,active").eq("id", id).single();
+
+    // Si la cuenta fue creada con confirmación por correo, el perfil se crea
+    // automáticamente en el primer inicio de sesión autenticado.
+    if (error && session?.user?.id === id) {
+      const fullName = String(session.user.user_metadata?.full_name || "").trim();
+      if (fullName) {
+        const created = await supabase.from("profiles").insert({
+          id,
+          full_name: fullName,
+          role: "worker",
+          active: true
+        }).select("id,full_name,role,active").single();
+        data = created.data;
+        error = created.error;
+      }
+    }
+
+    if (error || !data) {
+      setMessage("Tu usuario existe, pero todavía no tiene perfil en la programación.");
+      setProfile(null);
+      setLoading(false);
+      return;
+    }
+
+    setProfile(data as Profile);
+    if (data.role === "admin") await loadProfiles();
+    await loadRows(data as Profile);
     setLoading(false);
   };
 
@@ -218,13 +241,28 @@ function Login({ onMessage, message }: { onMessage: (s:string)=>void; message:st
     e.preventDefault(); setBusy(true); onMessage("");
     if (register) {
       if (password.length < 6) { onMessage("La contraseña debe tener al menos 6 caracteres."); setBusy(false); return; }
-      const {data,error}=await supabase.auth.signUp({email,password});
+      const {data,error}=await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { full_name: name.trim() } }
+      });
       if (error) onMessage(error.message);
       else if (data.user) {
-        const {error: profileError}=await supabase.from("profiles").insert({id:data.user.id,full_name:name.trim(),role:"worker",active:true});
-        if (profileError) onMessage(profileError.message);
-        else onMessage(data.session ? "Cuenta creada. Ya podés entrar." : "Cuenta creada. Revisá tu correo para confirmar la cuenta y luego ingresá.");
-        if (data.session) setRegister(false);
+        if (data.session) {
+          const {error: profileError}=await supabase.from("profiles").insert({
+            id:data.user.id,
+            full_name:name.trim(),
+            role:"worker",
+            active:true
+          });
+          if (profileError) onMessage(profileError.message);
+          else {
+            onMessage("Cuenta creada. Ya podés entrar.");
+            setRegister(false);
+          }
+        } else {
+          onMessage("Cuenta creada. Revisá tu correo para confirmar la cuenta y luego ingresá.");
+        }
       }
     } else {
       const {error}=await supabase.auth.signInWithPassword({email,password});
