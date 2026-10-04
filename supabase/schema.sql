@@ -60,6 +60,11 @@ drop policy if exists "profiles own row" on public.profiles;
 create policy "profiles own row" on public.profiles
 for select to authenticated using (id = auth.uid() or public.is_admin());
 
+drop policy if exists "users create own profile" on public.profiles;
+create policy "users create own profile" on public.profiles
+for insert to authenticated
+with check (id = auth.uid() and role = 'worker' and active = true);
+
 drop policy if exists "admins manage profiles" on public.profiles;
 create policy "admins manage profiles" on public.profiles
 for all to authenticated using (public.is_admin()) with check (public.is_admin());
