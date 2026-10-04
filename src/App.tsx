@@ -236,9 +236,31 @@ function App() {
 
 function Login({ onMessage, message }: { onMessage: (s:string)=>void; message:string }) {
   const [register,setRegister]=useState(false);
-  const [name,setName]=useState(""); const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [busy,setBusy]=useState(false);
+  const [name,setName]=useState(""); const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [busy,setBusy]=useState(false); const [resetMode,setResetMode]=useState(false); const [resetSent,setResetSent]=useState(false);
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash.includes("type=recovery")) {
+      setResetMode(true);
+      setRegister(false);
+    }
+  }, []);
+
   const submit=async(e:React.FormEvent)=>{
+
     e.preventDefault(); setBusy(true); onMessage("");
+    if (resetMode) {
+      if (password.length < 6) { onMessage("La contraseña debe tener al menos 6 caracteres."); setBusy(false); return; }
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) onMessage(error.message);
+      else {
+        onMessage("Contraseña actualizada. Ya podés ingresar.");
+        setResetMode(false);
+        setPassword("");
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+      setBusy(false);
+      return;
+    }
     if (register) {
       if (password.length < 6) { onMessage("La contraseña debe tener al menos 6 caracteres."); setBusy(false); return; }
       const {data,error}=await supabase.auth.signUp({
@@ -270,15 +292,27 @@ function Login({ onMessage, message }: { onMessage: (s:string)=>void; message:st
     }
     setBusy(false);
   };
+  const sendReset = async () => {
+    if (!email) { onMessage("Escribí tu correo primero."); return; }
+    setBusy(true); onMessage("");
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname
+    });
+    if (error) onMessage(error.message);
+    else setResetSent(true);
+    setBusy(false);
+  };
+
   return <div className="auth-shell"><form className="auth-card" onSubmit={submit}>
     <div className="hero-icon"><UserRound/></div><div className="eyebrow">CML · APLICADORES</div>
-    <h1>{register?"Crear mi cuenta":"Ingresá a tu agenda"}</h1>
-    <p>{register?"Creá tu cuenta gratis. Tu acceso quedará como aplicador y solo verás tu programación.":"Ingresá con tu correo y contraseña."}</p>
-    {register&&<input type="text" required minLength={2} placeholder="Nombre completo" value={name} onChange={e=>setName(e.target.value)}/>}
-    <input type="email" required placeholder="Correo electrónico" value={email} onChange={e=>setEmail(e.target.value)}/>
+    <h1>{resetMode?"Cambiar contraseña":register?"Crear mi cuenta":"Ingresá a tu agenda"}</h1>
+    <p>{resetMode?"Escribí una nueva contraseña para tu cuenta.":register?"Creá tu cuenta gratis. Tu acceso quedará como aplicador y solo verás tu programación.":"Ingresá con tu correo y contraseña."}</p>
+    {register&&<input type="text" required minLength={2} placeholder="Nombre completo" value={name} onChange={e=>setName(e.target.value)}/>}    <input type="email" required={!resetMode} placeholder="Correo electrónico" value={email} onChange={e=>setEmail(e.target.value)} disabled={resetMode}/>
     <input type="password" required minLength={6} placeholder="Contraseña (mínimo 6 caracteres)" value={password} onChange={e=>setPassword(e.target.value)}/>
-    <button className="primary-button" disabled={busy}>{busy?(register?"Creando…":"Ingresando…"):(register?"Crear cuenta":"Ingresar")}</button>
-    <button type="button" className="clear-button" onClick={()=>{setRegister(!register);onMessage("")}}>{register?"Ya tengo cuenta":"Crear una cuenta"}</button>
+    <button className="primary-button" disabled={busy}>{busy?(resetMode?"Guardando…":register?"Creando…":"Ingresando…"):(resetMode?"Guardar contraseña":register?"Crear cuenta":"Ingresar")}</button>
+    {!register&&!resetMode&&<button type="button" className="clear-button" onClick={sendReset} disabled={busy}>{resetSent?"Correo enviado":"Olvidé mi contraseña"}</button>}
+    {!resetMode&&<button type="button" className="clear-button" onClick={()=>{setRegister(!register);onMessage("");setResetSent(false)}}>{register?"Ya tengo cuenta":"Crear una cuenta"}</button>}
+    {resetMode&&<button type="button" className="clear-button" onClick={()=>{setResetMode(false);onMessage("")}}>Volver al inicio</button>}
     {message&&<div className="notice">{message}</div>}
   </form></div>;
 }
