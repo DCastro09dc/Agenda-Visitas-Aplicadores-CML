@@ -212,9 +212,37 @@ function App() {
 }
 
 function Login({ onMessage, message }: { onMessage: (s:string)=>void; message:string }) {
-  const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [busy,setBusy]=useState(false);
-  const submit=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);onMessage("");const {error}=await supabase.auth.signInWithPassword({email,password});if(error)onMessage(error.message);setBusy(false)};
-  return <div className="auth-shell"><form className="auth-card" onSubmit={submit}><div className="hero-icon"><UserRound/></div><div className="eyebrow">CML · APLICADORES</div><h1>Ingresá a tu agenda</h1><p>Usá el correo y contraseña que te asignó el administrador.</p><input type="email" required placeholder="Correo electrónico" value={email} onChange={e=>setEmail(e.target.value)}/><input type="password" required placeholder="Contraseña" value={password} onChange={e=>setPassword(e.target.value)}/><button className="primary-button" disabled={busy}>{busy?"Ingresando…":"Ingresar"}</button>{message&&<div className="notice">{message}</div>}</form></div>;
+  const [register,setRegister]=useState(false);
+  const [name,setName]=useState(""); const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [busy,setBusy]=useState(false);
+  const submit=async(e:React.FormEvent)=>{
+    e.preventDefault(); setBusy(true); onMessage("");
+    if (register) {
+      if (password.length < 6) { onMessage("La contraseña debe tener al menos 6 caracteres."); setBusy(false); return; }
+      const {data,error}=await supabase.auth.signUp({email,password});
+      if (error) onMessage(error.message);
+      else if (data.user) {
+        const {error: profileError}=await supabase.from("profiles").insert({id:data.user.id,full_name:name.trim(),role:"worker",active:true});
+        if (profileError) onMessage(profileError.message);
+        else onMessage(data.session ? "Cuenta creada. Ya podés entrar." : "Cuenta creada. Revisá tu correo para confirmar la cuenta y luego ingresá.");
+        if (data.session) setRegister(false);
+      }
+    } else {
+      const {error}=await supabase.auth.signInWithPassword({email,password});
+      if(error)onMessage(error.message);
+    }
+    setBusy(false);
+  };
+  return <div className="auth-shell"><form className="auth-card" onSubmit={submit}>
+    <div className="hero-icon"><UserRound/></div><div className="eyebrow">CML · APLICADORES</div>
+    <h1>{register?"Crear mi cuenta":"Ingresá a tu agenda"}</h1>
+    <p>{register?"Creá tu cuenta gratis. Tu acceso quedará como aplicador y solo verás tu programación.":"Ingresá con tu correo y contraseña."}</p>
+    {register&&<input type="text" required minLength={2} placeholder="Nombre completo" value={name} onChange={e=>setName(e.target.value)}/>}
+    <input type="email" required placeholder="Correo electrónico" value={email} onChange={e=>setEmail(e.target.value)}/>
+    <input type="password" required minLength={6} placeholder="Contraseña (mínimo 6 caracteres)" value={password} onChange={e=>setPassword(e.target.value)}/>
+    <button className="primary-button" disabled={busy}>{busy?(register?"Creando…":"Ingresando…"):(register?"Crear cuenta":"Ingresar")}</button>
+    <button type="button" className="clear-button" onClick={()=>{setRegister(!register);onMessage("")}}>{register?"Ya tengo cuenta":"Crear una cuenta"}</button>
+    {message&&<div className="notice">{message}</div>}
+  </form></div>;
 }
 
 function SetupScreen(){return <div className="auth-shell"><div className="auth-card"><div className="hero-icon"><FileSpreadsheet/></div><div className="eyebrow">CML · CONFIGURACIÓN</div><h1>Falta conectar la base de datos</h1><p>Esta versión ya está preparada para Supabase. Hay que colocar VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en el entorno de publicación.</p></div></div>}
