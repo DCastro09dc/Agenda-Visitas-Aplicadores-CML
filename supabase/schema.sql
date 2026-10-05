@@ -39,6 +39,45 @@ create index if not exists programaciones_aplicador_id_idx on public.programacio
 create index if not exists programaciones_fecha_idx on public.programaciones(fecha);
 create index if not exists programaciones_codigo_idx on public.programaciones(codigo);
 
+-- Normaliza nombres para poder vincular una programación importada
+-- con el usuario cuando este crea su cuenta después.
+create or replace function public.normalize_person_name(p_text text)
+returns text
+language sql
+immutable
+as $
+  select regexp_replace(lower(trim(coalesce(p_text, ''))), '[^a-z0-9áéíóúüñ ]', '', 'g');
+$;
+
+create or replace function public.claim_programaciones_for_user(p_user_id uuid)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $
+declare
+  updated_count integer;
+begin
+  if p_user_id <> auth.uid() then
+    raise exception 'No autorizado';
+  end if;
+
+  update public.programaciones p
+  set aplicador_id = p_user_id
+  where p.aplicador_id is null
+    and public.normalize_person_name(p.aplicador_nombre) =
+        public.normalize_person_name(
+          (select full_name from public.profiles where id = p_user_id)
+        );
+
+  get diagnostics updated_count = row_count;
+  return updated_count;
+end;
+$;
+
+revoke all on function public.claim_programaciones_for_user(uuid) from public;
+grant execute on function public.claim_programaciones_for_user(uuid) to authenticated;
+
 alter table public.profiles enable row level security;
 alter table public.programaciones enable row level security;
 alter table public.importaciones enable row level security;
@@ -89,6 +128,9 @@ drop policy if exists "admins insert imports" on public.importaciones;
 create policy "admins insert imports" on public.importaciones
 for insert to authenticated with check (public.is_admin());
 
--- Al crear un usuario desde Authentication, el admin debe crear su perfil.
+-- El perfil de los nuevos usuarios se crea como worker desde la aplicación.
+-- La función anterior vincula automáticamente las programaciones pendientes
+-- cuando el aplicador inicia sesión.
+--
 -- Para convertir el primer usuario en admin, después de registrarlo ejecutá:
 -- update public.profiles set role='admin' where id='UUID_DEL_USUARIO';
