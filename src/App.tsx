@@ -98,6 +98,11 @@ function App() {
     }
 
     setProfile(data as Profile);
+    if (data.role === "worker") {
+      // Vincula automáticamente la programación importada con el usuario
+      // cuando su nombre coincide, aunque todavía no existiera al publicar el Excel.
+      await supabase.rpc("claim_programaciones_for_user", { p_user_id: id });
+    }
     if (data.role === "admin") await loadProfiles();
     await loadRows(data as Profile);
     setLoading(false);
@@ -163,10 +168,6 @@ function App() {
         };
       });
       const unmatched = [...new Set(parsed.filter(x => x.aplicador_nombre && !x.aplicador_id).map(x => x.aplicador_nombre!))];
-      if (unmatched.length) {
-        setMessage(`No publiqué el Excel: ${unmatched.length} aplicador(es) no coinciden con usuarios registrados: ${unmatched.slice(0,8).join(", ")}${unmatched.length > 8 ? "…" : ""}`);
-        return;
-      }
       if (!parsed.length) { setMessage("El Excel no contiene registros."); return; }
       const { data: batch, error: batchError } = await supabase.from("importaciones").insert({ archivo_nombre: file.name, filas: parsed.length, creador_id: profile.id }).select("id").single();
       if (batchError) throw batchError;
@@ -177,7 +178,11 @@ function App() {
         const { error } = await supabase.from("programaciones").insert(records.slice(i, i+500));
         if (error) throw error;
       }
-      setMessage(`Programación publicada: ${records.length.toLocaleString("es-SV")} registros.`);
+      setMessage(
+        unmatched.length
+          ? `Programación publicada: ${records.length.toLocaleString("es-SV")} registros. ${unmatched.length} aplicador(es) todavía no tienen cuenta; cuando creen su cuenta con el mismo nombre, su programación se vinculará automáticamente.`
+          : `Programación publicada: ${records.length.toLocaleString("es-SV")} registros.`
+      );
       await loadRows(profile);
     } catch (e: any) {
       setMessage(e?.message || "No se pudo importar el Excel.");
